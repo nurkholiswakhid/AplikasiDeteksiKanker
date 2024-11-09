@@ -2,94 +2,86 @@ package com.dicoding.asclepius.view
 
 import android.content.Intent
 import android.graphics.Bitmap
-import android.graphics.BitmapFactory
 import android.net.Uri
 import android.os.Bundle
-import android.widget.Button
-import android.widget.ImageView
+import android.provider.MediaStore
 import android.widget.Toast
-import androidx.activity.result.contract.ActivityResultContracts
 import androidx.appcompat.app.AppCompatActivity
-import androidx.core.content.ContextCompat
-import com.dicoding.asclepius.R
+import androidx.activity.viewModels
 import com.dicoding.asclepius.databinding.ActivityMainBinding
-import com.dicoding.asclepius.helper.ImageClassifierHelper
+import com.dicoding.asclepius.viewmodel.ImageViewModel
+import java.io.ByteArrayOutputStream
 
 class MainActivity : AppCompatActivity() {
     private lateinit var binding: ActivityMainBinding
-    private var currentImageUri: Uri? = null
+    private val imageViewModel: ImageViewModel by viewModels()
+    private var currentBitmap: Bitmap? = null
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
-        setContentView(R.layout.activity_main)
         binding = ActivityMainBinding.inflate(layoutInflater)
         setContentView(binding.root)
 
-        // Handle gallery button click
+        // Restore image if available
+        imageViewModel.imageUri?.let { uri ->
+            currentBitmap = MediaStore.Images.Media.getBitmap(this.contentResolver, uri)
+            binding.previewImageView.setImageBitmap(currentBitmap)
+        }
+
         binding.galleryButton.setOnClickListener {
             startGallery()
         }
 
-        // Handle analyze button click
         binding.analyzeButton.setOnClickListener {
-            currentImageUri?.let { uri ->
-                val bitmap = getBitmapFromUri(uri)
-                bitmap?.let {
-                    analyzeImage(it)
-                }
-            } ?: showToast("Please select an image first!")
-        }
-    }
-
-    // Start gallery activity to pick an image
-    private fun startGallery() {
-        val intent = Intent(Intent.ACTION_PICK)
-        intent.type = "image/*"
-        galleryResultLauncher.launch(intent)
-    }
-
-    // Launch the gallery and receive result
-    private val galleryResultLauncher = registerForActivityResult(ActivityResultContracts.StartActivityForResult()) { result ->
-        if (result.resultCode == RESULT_OK) {
-            result.data?.data?.let {
-                currentImageUri = it
-                showImage(it)
+            if (currentBitmap != null) {
+                analyzeImage()
+            } else {
+                showToast("Pilih gambar terlebih dahulu!")
             }
         }
     }
 
-    // Display the image selected from gallery
-    private fun showImage(uri: Uri) {
-        binding.previewImageView.setImageURI(uri)
+    private fun startGallery() {
+        val intent = Intent(Intent.ACTION_PICK, MediaStore.Images.Media.EXTERNAL_CONTENT_URI)
+        startActivityForResult(intent, REQUEST_CODE_GALLERY)
     }
 
-    // Analyze the selected image using ImageClassifierHelper
-    private fun analyzeImage(image: Bitmap) {
-        val classifierHelper = ImageClassifierHelper(this)
-        val result = classifierHelper.classifyStaticImage(image)
-        val prediction = result.first
-        val confidenceScore = result.second
-
-        moveToResult(image, prediction, confidenceScore)
+    override fun onActivityResult(requestCode: Int, resultCode: Int, data: Intent?) {
+        super.onActivityResult(requestCode, resultCode, data)
+        if (requestCode == REQUEST_CODE_GALLERY && resultCode == RESULT_OK) {
+            val uri = data?.data
+            imageViewModel.imageUri = uri  // Save URI in ViewModel
+            uri?.let {
+                currentBitmap = MediaStore.Images.Media.getBitmap(this.contentResolver, it)
+                binding.previewImageView.setImageBitmap(currentBitmap)
+            }
+        }
     }
 
-    // Navigate to result screen and display prediction results
-    private fun moveToResult(image: Bitmap, prediction: String, confidenceScore: Float) {
-        val intent = Intent(this, ResultActivity::class.java)
-        intent.putExtra("PREDICTION", prediction)
-        intent.putExtra("CONFIDENCE_SCORE", confidenceScore)
-        intent.putExtra("IMAGE_BITMAP", image) // Pass the bitmap image
-        startActivity(intent)
+    private fun analyzeImage() {
+        moveToResult()
     }
 
-    // Show a toast message
+    private fun moveToResult() {
+        currentBitmap?.let { bitmap ->
+            val bitmapData = compressBitmap(bitmap)
+            val intent = Intent(this, ResultActivity::class.java)
+            intent.putExtra("IMAGE_BYTE_ARRAY", bitmapData)
+            startActivity(intent)
+        }
+    }
+
+    private fun compressBitmap(bitmap: Bitmap): ByteArray {
+        val stream = ByteArrayOutputStream()
+        bitmap.compress(Bitmap.CompressFormat.JPEG, 50, stream)
+        return stream.toByteArray()
+    }
+
     private fun showToast(message: String) {
         Toast.makeText(this, message, Toast.LENGTH_SHORT).show()
     }
 
-    // Helper method to convert Uri to Bitmap
-    private fun getBitmapFromUri(uri: Uri): Bitmap? {
-        val inputStream = contentResolver.openInputStream(uri)
-        return BitmapFactory.decodeStream(inputStream)
+    companion object {
+        private const val REQUEST_CODE_GALLERY = 100
     }
 }
